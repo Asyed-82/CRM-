@@ -1,0 +1,103 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: staffing_crm
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: admin123
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
+    networks:
+      - staffing-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Backend API (NestJS)
+  backend:
+    image: node:18-alpine
+    working_dir: /app/backend
+    ports:
+      - "3001:3001"
+    environment:
+      DATABASE_URL: "postgresql://admin:admin123@postgres:5432/staffing_crm"
+      JWT_SECRET: "your-super-secret-jwt-key-change-in-production"
+      JWT_EXPIRATION: "24h"
+      NODE_ENV: "development"
+      PORT: "3001"
+    volumes:
+      - ./backend:/app/backend
+      - /app/backend/node_modules
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - staffing-network
+    command: >
+      sh -c "
+      echo 'Installing backend dependencies...' &&
+      npm install &&
+      echo 'Generating Prisma client...' &&
+      npx prisma generate &&
+      echo 'Running migrations...' &&
+      npx prisma migrate dev --name init &&
+      echo 'Seeding database...' &&
+      npx prisma db seed &&
+      echo 'Starting backend server...' &&
+      npm run start:dev
+      "
+
+  # Frontend (Next.js)
+  frontend:
+    image: node:18-alpine
+    working_dir: /app/frontend
+    ports:
+      - "3000:3000"
+      - "3002:3002"  # For Next.js inspect
+    environment:
+      NEXT_PUBLIC_API_URL: "http://localhost:3001"
+      NEXT_PUBLIC_APP_URL: "http://localhost:3000"
+      NODE_ENV: "development"
+    volumes:
+      - ./frontend:/app/frontend
+      - /app/frontend/node_modules
+      - /app/frontend/.next
+    depends_on:
+      - backend
+    networks:
+      - staffing-network
+    command: >
+      sh -c "
+      echo 'Installing frontend dependencies...' &&
+      npm install &&
+      echo 'Starting frontend server...' &&
+      npm run dev
+      "
+
+  # Optional: PGAdmin for database management
+  pgadmin:
+    image: dpage/pgadmin4
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@staffingcrm.com
+      PGADMIN_DEFAULT_PASSWORD: admin123
+    ports:
+      - "5050:80"
+    depends_on:
+      - postgres
+    networks:
+      - staffing-network
+
+networks:
+  staffing-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
